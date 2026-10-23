@@ -1,0 +1,12 @@
+{
+    "name": "Blind Assistant",
+    "short_name": "Blind Assistant",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "description": "Voice-first object detection and navigation assistant.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": []
+}

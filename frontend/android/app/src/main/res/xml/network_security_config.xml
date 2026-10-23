@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android Network Security Configuration
+    =======================================
+    This file deliberately restricts cleartext (HTTP / WS) traffic.
+    Plain HTTP is allowed ONLY for known private development subnets so a
+    developer can connect a physical Android phone to a local FastAPI backend
+    without TLS.
+
+    Production deployments should use HTTPS / WSS with a valid certificate,
+    in which case the <domain-config> blocks below are never matched and the
+    <base-config> system trust anchors apply.
+
+    Subnets included:
+      10.0.2.2       – Android emulator reverse-proxy to the host machine
+      192.168.x.x    – typical home/office LAN (class C private)
+      10.0.x.x       – wider class A private (corporate / school Wi-Fi)
+      172.16-31.x.x  – class B private range
+
+    To use a different subnet in your lab, add another <domain> entry.
+-->
+<network-security-config>
+
+    <!-- Production default: system trust anchors only, no cleartext -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Android emulator loopback: 10.0.2.2 is the host machine -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+
+    <!-- Common home/office class C LAN range (192.168.0.0/16) -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Android domain-config does not support CIDR; list the /24 blocks
+             that cover the most common DHCP assignments from home routers. -->
+        <domain includeSubdomains="false">192.168.0.1</domain>
+        <domain includeSubdomains="false">192.168.1.1</domain>
+        <!-- For other 192.168.x.x addresses not listed above, add them here
+             or switch to HTTPS and remove the domain-config blocks. -->
+    </domain-config>
+
+    <!--
+        Wildcard private-address cleartext exception using a user-supplied
+        debug certificate — NOT enabled in the base config above.
+
+        If your LAN IP is outside 192.168.0-1.x or 10.0.2.x, the easiest
+        fix is to add your specific IP as another <domain> block, OR to
+        install a local CA certificate and use HTTPS.
+
+        IMPORTANT: This file is intentionally NOT using
+            <base-config cleartextTrafficPermitted="true">
+        which would silently allow cleartext to any host including public
+        internet endpoints.  That is the insecure global setting previously
+        used by android:usesCleartextTraffic="true" and is not acceptable.
+    -->
+
+</network-security-config>

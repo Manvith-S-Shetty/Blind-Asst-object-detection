@@ -1,0 +1,31 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+pydantic-settings==2.5.2
+websockets==13.1
+python-multipart==0.0.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+sqlalchemy==2.0.35
+aiosqlite==0.20.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx==0.27.2
+numpy>=2.0.0
+pillow==10.4.0
+
+# mDNS / DNS-SD: automatic LAN discovery so the Android app finds the backend
+# without manual IP entry.  Only active when ENVIRONMENT=development.
+zeroconf==0.136.2
+
+# Uncomment when wiring in more real models beyond YOLOv11:
+# torchvision           # needed if you add ByteTrack tracking
+# onnxruntime
+# opencv-python-headless
+# paddleocr
+# openai-whisper
+# piper-tts
+
+# Real detector (YOLOv11) — installed by default now, this is a large
+# download (~700MB-2GB including PyTorch, depending on platform/GPU).
+ultralytics==8.4.115
