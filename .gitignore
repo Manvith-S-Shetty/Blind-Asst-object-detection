@@ -29,8 +29,10 @@ var/
 sdist/
 develop-eggs/
 .installed.cfg
-lib/
+/lib/
 lib64/
+!frontend/lib/
+!frontend/lib/**
 
 # Testing & Coverage
 .cache/
