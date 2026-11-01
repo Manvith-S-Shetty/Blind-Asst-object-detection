@@ -1,0 +1,43 @@
+# YOLOv11 Indoor Obstacle Fine-Tuning Dataset Configuration
+# Used by backend/train_yolo.py for Blind Assistant
+
+path: ./data/indoor_obstacles
+train: images/train
+val: images/val
+test: images/test
+
+# Number of classes
+nc: 30
+
+# Class names mapped to indices (aligned with kRelevantClasses in Flutter frontend)
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  4: bus
+  5: train
+  6: truck
+  7: traffic light
+  8: fire hydrant
+  9: stop sign
+  10: bench
+  11: backpack
+  12: umbrella
+  13: handbag
+  14: suitcase
+  15: chair
+  16: couch
+  17: potted plant
+  18: bed
+  19: dining table
+  20: toilet
+  21: tv
+  22: laptop
+  23: microwave
+  24: oven
+  25: sink
+  26: refrigerator
+  27: book
+  28: dog
+  29: cat

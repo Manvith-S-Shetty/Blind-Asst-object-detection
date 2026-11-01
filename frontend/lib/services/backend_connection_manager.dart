@@ -72,8 +72,8 @@ class BackendConnectionManager extends ChangeNotifier {
   static const _discoveryTimeoutMs = 5000;
   static const _maxRetryIntervalMs = 30000;
   static const _baseRetryIntervalMs = 1000;
-  static const int _maxRetryAttempts = 8;
 
+  final int maxRetryAttempts;
   AppSettings _settings;
   final http.Client? _httpClient;
   final Future<ResolvedEndpoint?> Function(Duration timeout)? _customDiscovery;
@@ -88,6 +88,7 @@ class BackendConnectionManager extends ChangeNotifier {
     this._settings, {
     http.Client? httpClient,
     Future<ResolvedEndpoint?> Function(Duration timeout)? customDiscovery,
+    this.maxRetryAttempts = 8,
   })  : _httpClient = httpClient,
         _customDiscovery = customDiscovery;
 
@@ -255,10 +256,10 @@ class BackendConnectionManager extends ChangeNotifier {
 
   void _scheduleRetry() {
     if (_disposed) return;
-    if (_retryCount >= _maxRetryAttempts) {
+    if (_retryCount >= maxRetryAttempts) {
       _setStatus(
         ConnectionStatus.unavailable,
-        'Backend unavailable.  Check that the server is running and tap Retry.',
+        'Backend unavailable. Offline mode active.',
       );
       return;
     }
@@ -271,7 +272,7 @@ class BackendConnectionManager extends ChangeNotifier {
     _setStatus(
       ConnectionStatus.reconnecting,
       'Backend unreachable — retrying in ${(delayMs / 1000).toStringAsFixed(0)}s '
-      '(attempt $_retryCount / $_maxRetryAttempts)…',
+      '(attempt $_retryCount / $maxRetryAttempts)…',
     );
 
     _retryTimer?.cancel();

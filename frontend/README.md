@@ -1,95 +1,85 @@
-# Blind Assistant AI — Flutter Frontend
+# Blind Assistant AI — Flutter Android Frontend
 
-Voice-first mobile/web app: camera → live object detection guidance
-(spoken + visual), talking to the FastAPI backend over WebSocket.
+Voice-first assistive mobility aid: live on-device YOLO obstacle perception, calibrated monocular directional guidance, on-demand OpenStreetMap nearby-place discovery, and optional OSRM walking routes.
 
-## ⚠️ Important — one-time setup step required
+---
 
-This zip contains all the **Dart source code** (`lib/`), `pubspec.yaml`,
-and the key native permission files (`AndroidManifest.xml`, `Info.plist`,
-`web/index.html`). It does **not** contain the full native Android/iOS
-build scaffolding (Gradle files, Xcode project, etc.) — that's thousands
-of files Flutter generates locally, and it's tied to the exact Flutter
-version installed on your machine, so shipping a pre-built one usually
-causes more problems than it solves.
+## 1. Core Architecture & Highlights
 
-**You need to generate that scaffolding once, then drop this code in:**
+- **100% Offline Primary Navigation:** Executes locally on your Android phone using TensorFlow Lite (`yolo11n_float16.tflite`). Does not require internet, Wi-Fi, cellular, or server connections.
+- **Calibrated Monocular Distance:** Uses pinhole camera geometry ($D = \frac{f_y \cdot H_{\text{real}}}{h_{\text{bbox}}}$) with real-world height priors and strict uncertainty rejection. If bounding boxes are truncated or geometry is ambiguous, distance is marked as unknown (`[dist: unk]`) rather than guessing numbers.
+- **Single Coordinated Speech Queue:** `TtsService` serializes all speech into a single FIFO queue with urgent hazard preemption, pending update coalescing, and deadlock recovery watchdog (6.0s).
+- **Nearby Place Discovery (100% Free & Open-Source):** OpenStreetMap Overpass client supporting Restaurants, Hospitals, Clinics, Pharmacies, Bus Stops, Railway/Train Stations, Petrol/Gas Stations, Shops, Cafes, Groceries, and Banks/ATMs.
+- **Interactive Map & Accessible List:** `flutter_map` with OpenStreetMap tile rendering, user location pin, place markers, and accessible touch targets.
+- **Optional OSRM Pedestrian Routing:** Free Open Source Routing Machine (OSRM) foot routing providing true walking distance, estimated walk duration, and maneuver steps.
+- **Runtime Permissions & Accessibility:** High-contrast dark UI, Red STOP banner for imminent obstacles, screen reader semantics (TalkBack), and spoken recovery for denied/permanently denied camera, microphone, and location permissions.
 
-```bash
-# 1. Create a fresh Flutter project shell (this generates android/, ios/, etc.)
-flutter create --org com.example --platforms=android,ios,web blind_assistant
-cd blind_assistant
+---
 
-# 2. Replace the generated lib/ and pubspec.yaml with the ones from this zip
-rm -rf lib
-cp -r /path/to/this/zip/frontend/lib .
-cp /path/to/this/zip/frontend/pubspec.yaml .
+## 2. Quick Start Commands
 
-# 3. Merge in the permission files (camera/mic won't work without these)
-cp /path/to/this/zip/frontend/android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-cp /path/to/this/zip/frontend/ios/Runner/Info.plist ios/Runner/Info.plist
-cp /path/to/this/zip/frontend/web/index.html web/index.html
-cp /path/to/this/zip/frontend/web/manifest.json web/manifest.json
+From `c:\Blind-Asst-object-detection\frontend`:
 
-# 4. Install packages
+```powershell
+# 1. Fetch dependencies
 flutter pub get
 
-# 5. Run it
-flutter run   # pick your connected device/emulator/chrome when prompted
+# 2. Static analysis (0 issues)
+flutter analyze
+# Or run Dart analyzer directly:
+dart analyze
+
+# 3. Automated test suite (All 118 tests pass)
+flutter test
+
+# 4. Build debug APK
+flutter build apk --debug
 ```
 
-If you don't have Flutter installed yet: https://docs.flutter.dev/get-started/install
-(needs Android Studio for Android, or Xcode for iOS — Xcode only runs on macOS).
+The compiled APK will be located at:
+`c:\Blind-Asst-object-detection\frontend\build\app\outputs\flutter-apk\app-debug.apk`
 
-## Connecting to the backend
+---
 
-The app defaults to `10.0.2.2:8000`, which is the special address the
-**Android emulator** uses to reach your laptop's `localhost`. Go into
-the app's Settings screen to change it:
+## 3. Physical Device Installation
 
-| Running on...              | Backend host to enter                    |
-|-----------------------------|-------------------------------------------|
-| Android emulator             | `10.0.2.2` (default, already set)        |
-| iOS simulator                 | `localhost` or `127.0.0.1`               |
-| Real phone (Android/iOS)       | Your laptop's LAN IP, e.g. `192.168.1.5` |
-| Flutter Web (Chrome)            | `localhost`                            |
+1. Connect your Android phone via USB and enable **USB Debugging** in Developer Options.
+2. Verify connection:
+   ```powershell
+   adb devices
+   ```
+3. Install the APK:
+   ```powershell
+   adb install -r "build\app\outputs\flutter-apk\app-debug.apk"
+   ```
+4. Or launch directly with live hot-reload:
+   ```powershell
+   flutter run -d <your_device_id>
+   ```
 
-For a **real phone**, your laptop and phone must be on the same Wi-Fi,
-and you must start the backend with:
+---
+
+## 4. Connecting to the Optional FastAPI Server
+
+The app defaults to `10.0.2.2:8000` (Android emulator loopback) and supports automatic mDNS discovery on LAN (`_blindassist._tcp.local.`).
+
+To use optional cloud features (BLIP captioning, RapidOCR text reading, YOLO-World search):
 ```bash
+cd ../backend
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
-(`--host 0.0.0.0` is required — the default `127.0.0.1` only accepts
-connections from the same machine.) Find your laptop's LAN IP with
-`ipconfig` (Windows) or `ifconfig` / `ip addr` (Mac/Linux).
+Change host in the app's Settings screen if using a physical phone on LAN (`192.168.x.x`).
 
-## What's implemented
+---
 
-- **Navigation screen** — live camera preview, Start/Stop button, sends
-  frames to the backend every 400ms over WebSocket, displays + speaks
-  guidance as it arrives (urgent guidance interrupts current speech).
-- **Voice command button** — on-device speech recognition, routes
-  "read", "find", "describe" commands (currently speaks a placeholder —
-  wire this to `ApiService.readText/findObject/describeScene` once
-  you're ready, the methods already exist in `lib/services/api_service.dart`).
-- **Settings screen** — configurable backend host/port with a live
-  connection test.
-- High-contrast dark theme, large touch targets, `Semantics` labels for
-  screen reader compatibility (TalkBack/VoiceOver).
+## 5. Comprehensive Documentation Index
 
-## What's NOT implemented yet (good next steps)
-
-- Wiring the voice command button's "find"/"read"/"describe" actions to
-  the actual backend REST calls (the API methods exist, just not called yet)
-- Offline mode / local caching
-- The admin/web dashboard mentioned in the original tech stack (this is
-  the mobile app only)
-- Automated widget/integration tests
-
-## Known limitation — I could not run/compile this Flutter app
-
-This was written and reviewed for correctness against the Flutter/Dart
-APIs and the backend's JSON contract, but **not actually compiled** —
-this environment doesn't have the Flutter SDK or access to pub.dev.
-Run `flutter analyze` after setup to catch anything I missed, most
-likely minor version-mismatch issues in `pubspec.yaml` package versions.
+- [System Architecture](file:///c:/Blind-Asst-object-detection/docs/ARCHITECTURE.md)
+- [Installation & Deployment Guide](file:///c:/Blind-Asst-object-detection/docs/INSTALLATION_GUIDE.md)
+- [Android Permission & Security Guide](file:///c:/Blind-Asst-object-detection/docs/ANDROID_PERMISSION_GUIDE.md)
+- [API Configuration & Fair Use Guide](file:///c:/Blind-Asst-object-detection/docs/API_CONFIGURATION.md)
+- [Physical Device Testing Guide](file:///c:/Blind-Asst-object-detection/docs/DEVICE_TESTING_GUIDE.md)
+- [Known Limitations & Roadmap](file:///c:/Blind-Asst-object-detection/docs/KNOWN_LIMITATIONS.md)
+- [Project Audit](file:///c:/Blind-Asst-object-detection/PROJECT_AUDIT.md)
+- [Implementation Plan](file:///c:/Blind-Asst-object-detection/IMPLEMENTATION_PLAN.md)
+- [Feature Completion Checklist](file:///c:/Blind-Asst-object-detection/FEATURE_COMPLETION_CHECKLIST.md)

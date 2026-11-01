@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:blind_assistant/core/providers.dart';
 import 'package:blind_assistant/features/navigation/navigation_controller.dart';
+import 'package:blind_assistant/features/places/places_controller.dart';
+import 'package:blind_assistant/services/place_intent_parser.dart';
 
 class VoiceCommandButton extends ConsumerStatefulWidget {
   const VoiceCommandButton({super.key});
@@ -37,6 +41,54 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
 
   Future<void> _toggleListening() async {
     final tts = ref.read(ttsServiceProvider);
+    final permService = ref.read(permissionServiceProvider);
+
+    // Request microphone permission ONLY on-demand when user activates voice command
+    final micStatus = await permService.checkMicrophonePermission();
+    PermissionStatus finalStatus = micStatus;
+    if (micStatus.isPermanentlyDenied) {
+      finalStatus = micStatus;
+    } else if (!micStatus.isGranted) {
+      finalStatus = await permService.requestMicrophonePermission();
+    }
+
+    if (finalStatus.isPermanentlyDenied) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Microphone permission is permanently denied. Please grant permission in settings.',
+            ),
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: () => permService.openSettings(),
+            ),
+          ),
+        );
+      }
+      await tts.speak(
+        'Microphone permission is permanently denied. Please enable microphone permission in device settings.',
+        interrupt: true,
+      );
+      return;
+    } else if (!finalStatus.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Microphone permission is required for voice commands.'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+      await tts.speak(
+        'Microphone permission is required for voice commands.',
+        interrupt: true,
+      );
+      return;
+    }
+
     await _ensureInitialized();
     if (!_available) {
       await tts.speak('Voice recognition is not available on this device.', interrupt: true);
@@ -83,6 +135,39 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
       return;
     }
 
+    // A. Check for "Next Place" Voice Command (e.g. "next", "next place", "next result")
+    if (PlaceIntentParser.isNextIntent(text)) {
+      if (epoch != _activeCommandEpoch) return;
+      final placesCtrl = ref.read(placesControllerProvider.notifier);
+      await placesCtrl.announceNextPlace();
+      return;
+    }
+
+    // B. Check for "Repeat Place" Voice Command (e.g. "repeat", "repeat place", "say again", "tell me again")
+    if (PlaceIntentParser.isRepeatIntent(text)) {
+      if (epoch != _activeCommandEpoch) return;
+      final placesCtrl = ref.read(placesControllerProvider.notifier);
+      await placesCtrl.repeatCurrentPlace();
+      return;
+    }
+
+    // C. Check for GPS Nearby Place Intent (e.g. "find a restaurant near me", "find pharmacy nearby", "nearest bus stop")
+    final placeIntent = PlaceIntentParser.parse(text);
+    if (placeIntent != null) {
+      if (epoch != _activeCommandEpoch) return;
+      final placesCtrl = ref.read(placesControllerProvider.notifier);
+      if (mounted) {
+        context.push('/places?category=${placeIntent.category.name}');
+      }
+      await placesCtrl.searchNearby(
+        category: placeIntent.category,
+        customQuery: placeIntent.customSearchTerm,
+        speakResult: true,
+      );
+      return;
+    }
+
+    // B. Camera-dependent queries require an active camera frame
     final frameB64 = await navCtrl.captureCurrentFrameBase64();
     if (frameB64 == null) {
       if (epoch == _activeCommandEpoch) {
@@ -91,6 +176,8 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
       return;
     }
 
+    final connectionManager = ref.read(connectionManagerProvider);
+
     try {
       // 1. Read Text Intent
       if (lower.contains('read') ||
@@ -98,6 +185,13 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
           lower.contains('sign') ||
           lower.contains('words') ||
           lower.contains('label')) {
+        if (!connectionManager.isConnected) {
+          if (epoch == _activeCommandEpoch) {
+            await tts.speak('Reading text requires the optional server.', interrupt: true);
+          }
+          return;
+        }
+
         await tts.speak('Reading text in view...', interrupt: true);
         final res = await api.readText(sessionId, frameB64);
         if (epoch != _activeCommandEpoch) return; // Stale task cancellation
@@ -116,7 +210,7 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
           await tts.speak('No text was detected in view.');
         }
       }
-      // 2. Find Object Intent
+      // 2. Find Object Intent (Supported both Offline with on-device YOLO and Online with Server)
       else if (lower.contains('find') ||
           lower.contains('locate') ||
           lower.contains('where is') ||
@@ -136,18 +230,42 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
         final searchTarget = query.isEmpty ? 'object' : query;
 
         await tts.speak('Searching for $searchTarget...', interrupt: true);
-        final res = await api.findObject(sessionId, frameB64, searchTarget);
-        if (epoch != _activeCommandEpoch) return; // Stale task cancellation
 
-        final message = res['message'] as String?;
-        if (message != null && message.isNotEmpty) {
-          await tts.speak(message);
-        } else {
-          final matches = res['matches'] as List<dynamic>?;
-          if (matches != null && matches.isNotEmpty) {
-            await tts.speak('Found $searchTarget in view.');
+        if (connectionManager.isConnected) {
+          final res = await api.findObject(sessionId, frameB64, searchTarget);
+          if (epoch != _activeCommandEpoch) return; // Stale task cancellation
+
+          final message = res['message'] as String?;
+          if (message != null && message.isNotEmpty) {
+            await tts.speak(message);
           } else {
-            await tts.speak('$searchTarget is not currently detected in the camera view.');
+            final matches = res['matches'] as List<dynamic>?;
+            if (matches != null && matches.isNotEmpty) {
+              await tts.speak('Found $searchTarget in view.');
+            } else {
+              await tts.speak('$searchTarget is not currently detected in the camera view.');
+            }
+          }
+        } else {
+          // On-device local search using active YOLO detections
+          if (epoch != _activeCommandEpoch) return;
+
+          final matches = navState.detections.where((d) =>
+              d.label.toLowerCase() == searchTarget.toLowerCase() ||
+              d.label.toLowerCase().contains(searchTarget.toLowerCase()) ||
+              searchTarget.toLowerCase().contains(d.label.toLowerCase())).toList();
+
+          if (matches.isNotEmpty) {
+            final match = matches.first;
+            final dirPhrase = switch (match.direction) {
+              'left' => 'to your left',
+              'right' => 'to your right',
+              'center' => 'directly ahead',
+              _ => 'in view',
+            };
+            await tts.speak('Found ${match.label} $dirPhrase.');
+          } else {
+            await tts.speak('$searchTarget is not currently detected in view.');
           }
         }
       }
@@ -157,6 +275,13 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
           lower.contains('around') ||
           lower.contains('scene') ||
           lower.contains('front')) {
+        if (!connectionManager.isConnected) {
+          if (epoch == _activeCommandEpoch) {
+            await tts.speak('Scene description requires the optional server.', interrupt: true);
+          }
+          return;
+        }
+
         await tts.speak('Analyzing scene...', interrupt: true);
         final res = await api.describeScene(sessionId, frameB64);
         if (epoch != _activeCommandEpoch) return; // Stale task cancellation
@@ -168,7 +293,7 @@ class _VoiceCommandButtonState extends ConsumerState<VoiceCommandButton> {
       else {
         if (epoch == _activeCommandEpoch) {
           await tts.speak(
-            "I can read text, describe the scene, or help you find an object. Try saying 'describe the scene' or 'find my bag'.",
+            "I can help you find nearby places, find an object, describe the scene, or read text. Try saying 'find a restaurant near me' or 'where is the chair'.",
             interrupt: true,
           );
         }

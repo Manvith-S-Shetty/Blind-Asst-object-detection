@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 allprojects {
     repositories {
         google()
@@ -29,8 +32,18 @@ subprojects {
 
     afterEvaluate {
         val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-        if (android != null && android.namespace == null) {
-            android.namespace = "com.blindassistant.${project.name.replace('-', '_').replace('.', '_')}"
+        if (android != null) {
+            if (android.namespace == null) {
+                android.namespace = "com.blindassistant.${project.name.replace('-', '_').replace('.', '_')}"
+            }
+            android.compileOptions.sourceCompatibility = JavaVersion.VERSION_11
+            android.compileOptions.targetCompatibility = JavaVersion.VERSION_11
+        }
+    }
+
+    tasks.withType<KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_11)
         }
     }
 }

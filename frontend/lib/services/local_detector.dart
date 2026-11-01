@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import '../models/detection.dart';
+import 'distance_estimator.dart';
 
 /// Obstacle and navigation classes filtered from standard COCO-80,
 /// identical to backend app/pipeline/real/yolo_detector.py RELEVANT_CLASSES.
@@ -63,22 +65,36 @@ class LocalDetector {
   Interpreter? _interpreter;
   IsolateInterpreter? _isolateInterpreter;
   List<String> _labels = [];
+  List<int> _relevantClassIndices = [];
   bool _isInitialized = false;
   String? _lastError;
 
   final double confidenceThreshold;
   final double iouThreshold;
+  final double crossClassIouThreshold;
   final int inputSize;
+  final MonocularDistanceEstimator distanceEstimator;
 
   LocalDetector({
-    this.confidenceThreshold = 0.40,
+    this.confidenceThreshold = 0.35,
     this.iouThreshold = 0.45,
+    this.crossClassIouThreshold = 0.65,
     this.inputSize = 640,
+    this.distanceEstimator = const MonocularDistanceEstimator(),
   });
 
   bool get isInitialized => _isInitialized;
   String? get lastError => _lastError;
   List<String> get labels => List.unmodifiable(_labels);
+  List<int> get relevantClassIndices {
+    if (_relevantClassIndices.isEmpty && _labels.isNotEmpty) {
+      _relevantClassIndices = [
+        for (int i = 0; i < _labels.length; i++)
+          if (kRelevantClasses.contains(_labels[i])) i
+      ];
+    }
+    return List.unmodifiable(_relevantClassIndices);
+  }
 
   /// Initializes the local detector with the TFLite model and labels asset.
   /// Throws descriptive exceptions on failures while cleaning up resources.
@@ -105,6 +121,11 @@ class LocalDetector {
         throw StateError('Labels file is empty: $labelsAsset');
       }
 
+      _relevantClassIndices = [
+        for (int i = 0; i < _labels.length; i++)
+          if (kRelevantClasses.contains(_labels[i])) i
+      ];
+
       // 2. Configure Interpreter Options
       final options = InterpreterOptions()..threads = numThreads;
 
@@ -116,6 +137,11 @@ class LocalDetector {
       if (inputTensors.isEmpty) {
         throw StateError('Model has no input tensors');
       }
+      final outputTensors = _interpreter!.getOutputTensors();
+      if (outputTensors.isEmpty) {
+        throw StateError('Model has no output tensors');
+      }
+      debugPrint('LocalDetector tensors verified: Input=${inputTensors.first.shape}, Output=${outputTensors.first.shape}');
 
       // 4. Optionally spawn background IsolateInterpreter for UI-offloaded inference
       if (useIsolate) {
@@ -141,6 +167,103 @@ class LocalDetector {
     }
   }
 
+  /// Runs object detection on a live [CameraImage] from the camera stream.
+  Future<List<Detection>> detectFromCameraImage(
+    CameraImage cameraImage, {
+    int sensorOrientation = 0,
+  }) async {
+    _ensureInitialized();
+    var image = convertCameraImage(cameraImage);
+    if (image == null) {
+      throw ArgumentError('Failed to convert CameraImage to processable format');
+    }
+
+    if (sensorOrientation == 90) {
+      image = img.copyRotate(image, angle: 90);
+    } else if (sensorOrientation == 270) {
+      image = img.copyRotate(image, angle: 270);
+    } else if (sensorOrientation == 180) {
+      image = img.copyRotate(image, angle: 180);
+    }
+
+    return detectFromImage(image);
+  }
+
+  /// Converts a [CameraImage] (YUV420 on Android, BGRA8888 on iOS, or JPEG) to [img.Image].
+  img.Image? convertCameraImage(CameraImage cameraImage) {
+    try {
+      if (cameraImage.format.group == ImageFormatGroup.yuv420) {
+        return _convertYuv420ToImage(cameraImage);
+      } else if (cameraImage.format.group == ImageFormatGroup.bgra8888) {
+        return _convertBgra8888ToImage(cameraImage);
+      } else if (cameraImage.format.group == ImageFormatGroup.jpeg) {
+        return img.decodeImage(cameraImage.planes[0].bytes);
+      }
+    } catch (e) {
+      debugPrint('Error converting CameraImage: $e');
+    }
+    return null;
+  }
+
+  img.Image _convertYuv420ToImage(CameraImage cameraImage) {
+    final width = cameraImage.width;
+    final height = cameraImage.height;
+    final outImg = img.Image(width: width, height: height);
+
+    final yPlane = cameraImage.planes[0];
+    final uPlane = cameraImage.planes[1];
+    final vPlane = cameraImage.planes[2];
+
+    final yBytes = yPlane.bytes;
+    final uBytes = uPlane.bytes;
+    final vBytes = vPlane.bytes;
+
+    final yRowStride = yPlane.bytesPerRow;
+    final uvRowStride = uPlane.bytesPerRow;
+    final uvPixelStride = uPlane.bytesPerPixel ?? 1;
+
+    for (int y = 0; y < height; y++) {
+      final yOffset = y * yRowStride;
+      final uvRowOffset = (y >> 1) * uvRowStride;
+      for (int x = 0; x < width; x++) {
+        final yVal = yBytes[yOffset + x];
+        final uvOffset = uvRowOffset + (x >> 1) * uvPixelStride;
+        if (uvOffset >= uBytes.length || uvOffset >= vBytes.length) {
+          continue;
+        }
+        final uVal = uBytes[uvOffset];
+        final vVal = vBytes[uvOffset];
+
+        final r = (yVal + 1.402 * (vVal - 128)).round().clamp(0, 255);
+        final g = (yVal - 0.344136 * (uVal - 128) - 0.714136 * (vVal - 128))
+            .round()
+            .clamp(0, 255);
+        final b = (yVal + 1.772 * (uVal - 128)).round().clamp(0, 255);
+
+        outImg.setPixelRgb(x, y, r, g, b);
+      }
+    }
+    return outImg;
+  }
+
+  img.Image _convertBgra8888ToImage(CameraImage cameraImage) {
+    final width = cameraImage.width;
+    final height = cameraImage.height;
+    final outImg = img.Image(width: width, height: height);
+    final bytes = cameraImage.planes[0].bytes;
+    int srcIdx = 0;
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final b = bytes[srcIdx++];
+        final g = bytes[srcIdx++];
+        final r = bytes[srcIdx++];
+        srcIdx++; // skip alpha
+        outImg.setPixelRgb(x, y, r, g, b);
+      }
+    }
+    return outImg;
+  }
+
   /// Runs object detection on JPEG image bytes (e.g. captured from CameraController).
   Future<List<Detection>> detectFromJpeg(Uint8List jpegBytes) async {
     _ensureInitialized();
@@ -148,10 +271,11 @@ class LocalDetector {
       throw ArgumentError('Empty JPEG byte buffer');
     }
 
-    final decoded = img.decodeImage(jpegBytes);
+    var decoded = img.decodeImage(jpegBytes);
     if (decoded == null) {
       throw ArgumentError('Failed to decode image from JPEG bytes');
     }
+    decoded = img.bakeOrientation(decoded);
 
     return detectFromImage(decoded);
   }
@@ -198,16 +322,21 @@ class LocalDetector {
 
     final candidates = <CandidateBox>[];
 
+    final relIndices = relevantClassIndices.isNotEmpty
+        ? relevantClassIndices
+        : List.generate(_labels.isNotEmpty ? _labels.length : 80, (i) => i);
+
     for (int a = 0; a < numAnchors; a++) {
-      // Find highest class confidence for anchor `a`
+      // Find highest class confidence specifically among relevant obstacle classes for anchor `a`
       double bestScore = 0.0;
       int bestClassId = -1;
 
-      for (int c = 4; c < 84; c++) {
-        final score = (batch0[c][a] as num).toDouble();
+      for (int i = 0; i < relIndices.length; i++) {
+        final classId = relIndices[i];
+        final score = (batch0[4 + classId][a] as num).toDouble();
         if (score > bestScore) {
           bestScore = score;
-          bestClassId = c - 4;
+          bestClassId = classId;
         }
       }
 
@@ -216,9 +345,6 @@ class LocalDetector {
       }
 
       final label = bestClassId < _labels.length ? _labels[bestClassId] : 'unknown';
-      if (!kRelevantClasses.contains(label)) {
-        continue;
-      }
 
       // Box coordinates in 640x640 space (cx, cy, w, h)
       final cx = (batch0[0][a] as num).toDouble();
@@ -262,10 +388,60 @@ class LocalDetector {
     }
 
     // Apply per-class Non-Maximum Suppression (NMS)
-    final suppressedBoxes = _applyNms(candidates, iouThreshold);
+    final nmsBoxes = _applyNms(candidates, iouThreshold);
 
-    // Convert to application Detection models
+    // Suppress cross-class duplicates (e.g. model predicting both chair and couch on the same box)
+    final suppressedBoxes = _applyCrossClassSuppression(
+      nmsBoxes,
+      crossClassIouThreshold,
+    );
+
+    // Convert to application Detection models with direction, path corridor, distance, and risk metadata
     return suppressedBoxes.map((box) {
+      final centerX = (box.x1 + box.x2) / 2.0;
+      final String direction;
+      if (centerX < transform.origWidth * 0.33) {
+        direction = 'left';
+      } else if (centerX > transform.origWidth * 0.67) {
+        direction = 'right';
+      } else {
+        direction = 'center';
+      }
+
+      final bool inPath = (direction == 'center') ||
+          (box.x1 < transform.origWidth * 0.65 && box.x2 > transform.origWidth * 0.35);
+
+      final estimate = distanceEstimator.estimateDistance(
+        label: box.label,
+        x1: box.x1,
+        y1: box.y1,
+        x2: box.x2,
+        y2: box.y2,
+        origWidth: transform.origWidth,
+        origHeight: transform.origHeight,
+        confidence: box.confidence,
+      );
+
+      final distanceM = estimate.distanceMeters;
+      final proximityBand = estimate.proximityBand;
+
+      final String riskLevel;
+      if (inPath) {
+        if ((distanceM != null && distanceM <= 1.5) || proximityBand == 'immediate') {
+          riskLevel = 'imminent';
+        } else if ((distanceM != null && distanceM <= 2.5) || proximityBand == 'near') {
+          riskLevel = 'potential';
+        } else {
+          riskLevel = 'awareness';
+        }
+      } else {
+        if ((distanceM != null && distanceM <= 1.2) || proximityBand == 'immediate') {
+          riskLevel = 'potential';
+        } else {
+          riskLevel = 'awareness';
+        }
+      }
+
       return Detection(
         label: box.label,
         confidence: double.parse(box.confidence.toStringAsFixed(2)),
@@ -275,6 +451,13 @@ class LocalDetector {
           x2: double.parse(box.x2.toStringAsFixed(1)),
           y2: double.parse(box.y2.toStringAsFixed(1)),
         ),
+        distanceM: distanceM,
+        direction: direction,
+        inPath: inPath,
+        proximityBand: proximityBand,
+        riskLevel: riskLevel,
+        frameWidth: transform.origWidth,
+        frameHeight: transform.origHeight,
       );
     }).toList();
   }
@@ -314,6 +497,43 @@ class LocalDetector {
     result.sort((a, b) => b.confidence.compareTo(a.confidence));
     return result;
   }
+
+  /// Suppresses duplicate bounding boxes across different classes that overlap
+  /// significantly (e.g., model oscillating between 'chair' and 'couch' on same obstacle).
+  List<CandidateBox> _applyCrossClassSuppression(
+    List<CandidateBox> boxes,
+    double threshold,
+  ) {
+    if (boxes.length <= 1) return boxes;
+    // Boxes are already sorted descending by confidence from _applyNms
+    final kept = <CandidateBox>[];
+    final active = List<bool>.filled(boxes.length, true);
+
+    for (int i = 0; i < boxes.length; i++) {
+      if (!active[i]) continue;
+      final current = boxes[i];
+      kept.add(current);
+
+      for (int j = i + 1; j < boxes.length; j++) {
+        if (!active[j]) continue;
+        final other = boxes[j];
+        final iou = _calculateIou(current, other);
+        if (iou >= threshold) {
+          active[j] = false;
+        }
+      }
+    }
+    return kept;
+  }
+
+  @visibleForTesting
+  List<CandidateBox> applyCrossClassSuppression(
+    List<CandidateBox> boxes,
+    double threshold,
+  ) => _applyCrossClassSuppression(boxes, threshold);
+
+  @visibleForTesting
+  double calculateIou(CandidateBox a, CandidateBox b) => _calculateIou(a, b);
 
   /// Calculates Intersection over Union (IoU) between two bounding boxes.
   double _calculateIou(CandidateBox a, CandidateBox b) {

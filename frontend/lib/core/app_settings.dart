@@ -11,17 +11,32 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AppSettings {
   static const _kBackendHostKey = 'backend_host';
   static const _kBackendPortKey = 'backend_port';
+  static const _kSpeechCooldownKey = 'speech_cooldown_s';
+  static const _kConfidenceThresholdKey = 'confidence_threshold';
+  static const _kConsecutiveFramesKey = 'consecutive_frames_req';
 
   /// 10.0.2.2 is Android emulator loopback to the host machine.
   /// On a physical device this address is unreachable — used as the sentinel
   /// value to trigger mDNS discovery instead of direct-connect.
   static const defaultHost = '10.0.2.2';
   static const defaultPort = 8000;
+  static const defaultSpeechCooldown = 5.0; // seconds before reannouncing unchanged obstacle
+  static const defaultConfidenceThreshold = 0.35; // optimal for YOLO11n obstacle detection
+  static const defaultConsecutiveFrames = 2; // consecutive frames before triggering speech
 
   final String host;
   final int port;
+  final double speechCooldownSeconds;
+  final double confidenceThreshold;
+  final int consecutiveFramesRequired;
 
-  const AppSettings({this.host = defaultHost, this.port = defaultPort});
+  const AppSettings({
+    this.host = defaultHost,
+    this.port = defaultPort,
+    this.speechCooldownSeconds = defaultSpeechCooldown,
+    this.confidenceThreshold = defaultConfidenceThreshold,
+    this.consecutiveFramesRequired = defaultConsecutiveFrames,
+  });
 
   /// Full HTTP base URL including the API prefix, e.g.:
   ///   http://192.168.1.5:8000/api/v1
@@ -44,6 +59,12 @@ class AppSettings {
     return AppSettings(
       host: prefs.getString(_kBackendHostKey) ?? defaultHost,
       port: prefs.getInt(_kBackendPortKey) ?? defaultPort,
+      speechCooldownSeconds:
+          prefs.getDouble(_kSpeechCooldownKey) ?? defaultSpeechCooldown,
+      confidenceThreshold:
+          prefs.getDouble(_kConfidenceThresholdKey) ?? defaultConfidenceThreshold,
+      consecutiveFramesRequired:
+          prefs.getInt(_kConsecutiveFramesKey) ?? defaultConsecutiveFrames,
     );
   }
 
@@ -51,18 +72,48 @@ class AppSettings {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kBackendHostKey, host);
     await prefs.setInt(_kBackendPortKey, port);
+    await prefs.setDouble(_kSpeechCooldownKey, speechCooldownSeconds);
+    await prefs.setDouble(_kConfidenceThresholdKey, confidenceThreshold);
+    await prefs.setInt(_kConsecutiveFramesKey, consecutiveFramesRequired);
   }
 
-  AppSettings copyWith({String? host, int? port}) =>
-      AppSettings(host: host ?? this.host, port: port ?? this.port);
+  AppSettings copyWith({
+    String? host,
+    int? port,
+    double? speechCooldownSeconds,
+    double? confidenceThreshold,
+    int? consecutiveFramesRequired,
+  }) =>
+      AppSettings(
+        host: host ?? this.host,
+        port: port ?? this.port,
+        speechCooldownSeconds:
+            speechCooldownSeconds ?? this.speechCooldownSeconds,
+        confidenceThreshold:
+            confidenceThreshold ?? this.confidenceThreshold,
+        consecutiveFramesRequired:
+            consecutiveFramesRequired ?? this.consecutiveFramesRequired,
+      );
 
   @override
-  String toString() => 'AppSettings($host:$port)';
+  String toString() =>
+      'AppSettings($host:$port, cooldown=${speechCooldownSeconds}s, conf=$confidenceThreshold, frames=$consecutiveFramesRequired)';
 
   @override
   bool operator ==(Object other) =>
-      other is AppSettings && other.host == host && other.port == port;
+      other is AppSettings &&
+      other.host == host &&
+      other.port == port &&
+      other.speechCooldownSeconds == speechCooldownSeconds &&
+      other.confidenceThreshold == confidenceThreshold &&
+      other.consecutiveFramesRequired == consecutiveFramesRequired;
 
   @override
-  int get hashCode => Object.hash(host, port);
+  int get hashCode => Object.hash(
+        host,
+        port,
+        speechCooldownSeconds,
+        confidenceThreshold,
+        consecutiveFramesRequired,
+      );
 }
