@@ -95,6 +95,104 @@ void main() {
       expect(decoded.height, equals(1080));
     });
 
+    test('Cross-class duplicate suppression filters lower-confidence overlapping boxes', () {
+      final chairBox = CandidateBox(
+        classId: 56,
+        label: 'chair',
+        confidence: 0.85,
+        x1: 100,
+        y1: 100,
+        x2: 300,
+        y2: 400,
+      );
+      // Almost identical box predicted as couch with lower confidence
+      final couchBox = CandidateBox(
+        classId: 57,
+        label: 'couch',
+        confidence: 0.72,
+        x1: 105,
+        y1: 98,
+        x2: 305,
+        y2: 402,
+      );
+      // Separate box elsewhere
+      final personBox = CandidateBox(
+        classId: 0,
+        label: 'person',
+        confidence: 0.90,
+        x1: 450,
+        y1: 100,
+        x2: 600,
+        y2: 500,
+      );
+
+      final iou = detector.calculateIou(chairBox, couchBox);
+      expect(iou, greaterThan(0.85));
+
+      final inputBoxes = [personBox, chairBox, couchBox];
+      final filtered = detector.applyCrossClassSuppression(inputBoxes, 0.65);
+
+      // Couch should be suppressed because it heavily overlaps chair
+      expect(filtered.length, equals(2));
+      expect(filtered.map((b) => b.label), containsAll(['person', 'chair']));
+      expect(filtered.map((b) => b.label).contains('couch'), isFalse);
+    });
+
+    test('Cross-class suppression retains separate non-overlapping boxes', () {
+      final box1 = CandidateBox(
+        classId: 56,
+        label: 'chair',
+        confidence: 0.80,
+        x1: 50,
+        y1: 50,
+        x2: 150,
+        y2: 250,
+      );
+      final box2 = CandidateBox(
+        classId: 60,
+        label: 'dining table',
+        confidence: 0.78,
+        x1: 200,
+        y1: 50,
+        x2: 400,
+        y2: 250,
+      );
+
+      final filtered = detector.applyCrossClassSuppression([box1, box2], 0.65);
+      expect(filtered.length, equals(2));
+    });
+
+    test('relevantClassIndices correctly maps 30 obstacle classes', () {
+      final labelsFile = File('../frontend/assets/models/labels.txt');
+      expect(labelsFile.existsSync(), isTrue);
+      final labels = labelsFile.readAsLinesSync().where((l) => l.trim().isNotEmpty).toList();
+
+      final indices = [
+        for (int i = 0; i < labels.length; i++)
+          if (kRelevantClasses.contains(labels[i])) i
+      ];
+
+      expect(indices.length, equals(30));
+      expect(indices, contains(0));  // person
+      expect(indices, contains(5));  // bus
+      expect(indices, contains(56)); // chair
+      expect(indices, contains(57)); // couch
+      expect(indices, contains(59)); // bed
+      expect(indices, contains(60)); // dining table
+
+      // Verify no irrelevant class is in indices
+      for (final idx in indices) {
+        expect(kRelevantClasses.contains(labels[idx]), isTrue);
+      }
+    });
+
+    test('img.bakeOrientation preserves dimensions on standard unrotated image', () {
+      final sample = img.Image(width: 810, height: 1080);
+      final baked = img.bakeOrientation(sample);
+      expect(baked.width, equals(810));
+      expect(baked.height, equals(1080));
+    });
+
     test('Resource disposal resets state', () async {
       await detector.dispose();
       expect(detector.isInitialized, isFalse);

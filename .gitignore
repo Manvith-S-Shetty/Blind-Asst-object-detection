@@ -153,3 +153,5 @@ backend/weights/
 *.pth
 *.onnx
 *.bin
+
+data/

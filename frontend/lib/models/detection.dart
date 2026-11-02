@@ -24,6 +24,8 @@ class Detection {
   final bool? inPath;
   final String? riskLevel; // "imminent" | "potential" | "awareness" | "negligible"
   final String? proximityBand; // "immediate" | "near" | "mid" | "far" | "unknown"
+  final int? frameWidth;
+  final int? frameHeight;
 
   Detection({
     this.trackId,
@@ -35,6 +37,8 @@ class Detection {
     this.inPath,
     this.riskLevel,
     this.proximityBand,
+    this.frameWidth,
+    this.frameHeight,
   });
 
   factory Detection.fromJson(Map<String, dynamic> json) => Detection(
@@ -47,6 +51,8 @@ class Detection {
         inPath: json['in_path'] as bool?,
         riskLevel: json['risk_level'] as String?,
         proximityBand: json['proximity_band'] as String?,
+        frameWidth: json['frame_width'] as int?,
+        frameHeight: json['frame_height'] as int?,
       );
 }
 

@@ -102,6 +102,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
             const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.teal.withValues(alpha: 0.10),
+                border: Border.all(color: Colors.teal.shade700, width: 1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                '💡 On-device YOLO navigation functions completely offline on your phone without requiring a server connection. The FastAPI server is optional for developer telemetry and advanced scene queries.',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 8),
             if (status == ConnectionStatus.connected)
               const Text(
                 'Auto-discovered via mDNS or saved address.',
